@@ -5,35 +5,498 @@ from datetime import datetime, timedelta
 from collections import deque, defaultdict
 import threading
 import os
+import sys
 
-# Flask for Render health check
-from flask import Flask, jsonify
+# Flask for web control panel
+from flask import Flask, jsonify, render_template_string, request
 
 # ============================================
-# FLASK HEALTH CHECK SERVER
+# FLASK WEB CONTROL PANEL
 # ============================================
 app = Flask(__name__)
 
+# Global bot instance
+bot_instance = None
+bot_lock = threading.Lock()
+
+# HTML Template for control panel
+CONTROL_PANEL_HTML = """
+<!DOCTYPE html>
+<html dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TS Bot Control Panel</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: rgba(255,255,255,0.05);
+            border-radius: 20px;
+            padding: 40px;
+            max-width: 600px;
+            width: 100%;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255,255,255,0.1);
+            box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .header h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        .status {
+            text-align: center;
+            padding: 20px;
+            border-radius: 15px;
+            margin-bottom: 30px;
+            font-size: 1.2em;
+            font-weight: bold;
+        }
+        .status.online {
+            background: rgba(0, 255, 0, 0.1);
+            border: 2px solid #00ff00;
+            color: #00ff00;
+        }
+        .status.offline {
+            background: rgba(255, 0, 0, 0.1);
+            border: 2px solid #ff0000;
+            color: #ff0000;
+        }
+        .status.restarting {
+            background: rgba(255, 165, 0, 0.1);
+            border: 2px solid #ffa500;
+            color: #ffa500;
+        }
+        .buttons {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+        .btn {
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 1.1em;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        .btn:active {
+            transform: translateY(0);
+        }
+        .btn-start {
+            background: #00c853;
+            color: white;
+            grid-column: span 2;
+        }
+        .btn-start:hover {
+            background: #00e676;
+        }
+        .btn-stop {
+            background: #ff1744;
+            color: white;
+        }
+        .btn-stop:hover {
+            background: #ff5252;
+        }
+        .btn-restart {
+            background: #ff9100;
+            color: white;
+        }
+        .btn-restart:hover {
+            background: #ffab40;
+        }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .info {
+            margin-top: 30px;
+            padding: 20px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        .info h3 {
+            margin-bottom: 15px;
+            color: #aaa;
+        }
+        .info-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .info-item:last-child {
+            border-bottom: none;
+        }
+        .info-label {
+            color: #888;
+        }
+        .info-value {
+            color: #fff;
+            font-weight: bold;
+        }
+        .response {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 10px;
+            text-align: center;
+            display: none;
+        }
+        .response.success {
+            display: block;
+            background: rgba(0, 255, 0, 0.1);
+            border: 1px solid #00ff00;
+            color: #00ff00;
+        }
+        .response.error {
+            display: block;
+            background: rgba(255, 0, 0, 0.1);
+            border: 1px solid #ff0000;
+            color: #ff0000;
+        }
+        .emoji {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="emoji">🤖</div>
+            <h1>TeamSpeak Bot</h1>
+            <p>Control Panel</p>
+        </div>
+
+        <div class="status {{ status_class }}">
+            {{ status_text }}
+        </div>
+
+        <div class="buttons">
+            <button class="btn btn-start" onclick="action('start')" {{ 'disabled' if status == 'online' else '' }}>
+                ▶ Start Bot
+            </button>
+            <button class="btn btn-stop" onclick="action('stop')" {{ 'disabled' if status == 'offline' else '' }}>
+                ⏹ Stop Bot
+            </button>
+            <button class="btn btn-restart" onclick="action('restart')" {{ 'disabled' if status == 'offline' else '' }}>
+                🔄 Restart Bot
+            </button>
+        </div>
+
+        <div id="response" class="response"></div>
+
+        <div class="info">
+            <h3>📊 Bot Information</h3>
+            <div class="info-item">
+                <span class="info-label">Status</span>
+                <span class="info-value">{{ status_text }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Server</span>
+                <span class="info-value">{{ server_ip }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Nickname</span>
+                <span class="info-value">{{ nickname }}</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">Uptime</span>
+                <span class="info-value">{{ uptime }}</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function action(type) {
+            const responseDiv = document.getElementById('response');
+            responseDiv.className = 'response';
+            responseDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/' + type, { method: 'POST' });
+                const data = await response.json();
+                
+                responseDiv.className = 'response ' + (data.success ? 'success' : 'error');
+                responseDiv.textContent = data.message;
+                
+                if (data.success) {
+                    setTimeout(() => location.reload(), 2000);
+                }
+            } catch (error) {
+                responseDiv.className = 'response error';
+                responseDiv.textContent = 'Error: ' + error.message;
+            }
+        }
+
+        // Auto refresh every 10 seconds
+        setInterval(() => {
+            fetch('/api/status')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status !== '{{ status }}') {
+                        location.reload();
+                    }
+                })
+                .catch(() => {});
+        }, 10000);
+    </script>
+</body>
+</html>
+"""
+
+bot_start_time = None
+bot_status = "offline"  # offline, online, restarting
+
+def get_bot_info():
+    """Get current bot information"""
+    global bot_instance, bot_status, bot_start_time
+    
+    info = {
+        'status': bot_status,
+        'server_ip': SERVER_IP if 'SERVER_IP' in globals() else 'N/A',
+        'nickname': BOT_NICKNAME if 'BOT_NICKNAME' in globals() else 'Staff',
+        'uptime': 'N/A'
+    }
+    
+    if bot_start_time and bot_status == 'online':
+        uptime_seconds = int(time.time() - bot_start_time)
+        hours = uptime_seconds // 3600
+        minutes = (uptime_seconds % 3600) // 60
+        seconds = uptime_seconds % 60
+        info['uptime'] = f"{hours}h {minutes}m {seconds}s"
+    
+    return info
+
 @app.route('/')
-def home():
-    return """
-    <html>
-    <head><title>TS Bot Status</title></head>
-    <body style="font-family: Arial; padding: 50px; text-align: center;">
-        <h1>🤖 TeamSpeak Bot Is Running!</h1>
-        <p>Status: <span style="color: green;">● Online</span></p>
-        <p><a href="/health">Health Check</a></p>
-    </body>
-    </html>
-    """
+def index():
+    """Main control panel page"""
+    info = get_bot_info()
+    
+    status_class = {
+        'online': 'online',
+        'offline': 'offline',
+        'restarting': 'restarting'
+    }.get(info['status'], 'offline')
+    
+    status_text = {
+        'online': '🟢 Bot is Online',
+        'offline': '🔴 Bot is Offline',
+        'restarting': '🟠 Bot is Restarting...'
+    }.get(info['status'], '⚪ Unknown')
+    
+    return render_template_string(
+        CONTROL_PANEL_HTML,
+        status=info['status'],
+        status_class=status_class,
+        status_text=status_text,
+        server_ip=info['server_ip'],
+        nickname=info['nickname'],
+        uptime=info['uptime']
+    )
 
 @app.route('/health')
 def health():
-    return jsonify({"status": "ok", "bot": "running"})
+    """Health check endpoint"""
+    return jsonify({"status": "ok", "bot": bot_status})
+
+@app.route('/api/status')
+def api_status():
+    """API: Get bot status"""
+    return jsonify(get_bot_info())
+
+@app.route('/api/start', methods=['POST'])
+def api_start():
+    """API: Start the bot"""
+    global bot_instance, bot_status, bot_start_time
+    
+    with bot_lock:
+        if bot_status == 'online':
+            return jsonify({
+                'success': False,
+                'message': '⚠️ Bot is already running!'
+            })
+        
+        try:
+            bot_status = 'restarting'
+            
+            # Start bot in a new thread
+            def start_bot():
+                global bot_instance, bot_status, bot_start_time
+                try:
+                    bot_instance = TeamSpeakBot(
+                        host=SERVER_IP,
+                        port=QUERY_PORT,
+                        username=QUERY_USER,
+                        password=QUERY_PASS,
+                        server_id=SERVER_ID,
+                        nickname=BOT_NICKNAME
+                    )
+                    bot_start_time = time.time()
+                    bot_status = 'online'
+                    
+                    print("\n📋 Channels:")
+                    channels = bot_instance.get_channel_list()
+                    for name, cid in channels.items():
+                        print(f"   CID {cid}: \"{name}\"")
+                    
+                    print("\n📋 Server Groups:")
+                    groups = bot_instance.get_server_groups()
+                    for sgid, name in groups.items():
+                        print(f"   SGID {sgid}: \"{name}\"")
+                    
+                    bot_instance.monitor()
+                except Exception as e:
+                    print(f"❌ Bot error: {e}")
+                    bot_status = 'offline'
+                    bot_instance = None
+            
+            bot_thread = threading.Thread(target=start_bot, daemon=True)
+            bot_thread.start()
+            
+            # Wait a bit to see if connection succeeds
+            time.sleep(3)
+            
+            if bot_status == 'online':
+                return jsonify({
+                    'success': True,
+                    'message': '✅ Bot started successfully!'
+                })
+            elif bot_status == 'restarting':
+                # Still connecting
+                return jsonify({
+                    'success': True,
+                    'message': '🔄 Bot is connecting... Please wait.'
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'message': '❌ Bot failed to start! Check logs.'
+                })
+                
+        except Exception as e:
+            bot_status = 'offline'
+            return jsonify({
+                'success': False,
+                'message': f'❌ Error: {str(e)}'
+            })
+
+@app.route('/api/stop', methods=['POST'])
+def api_stop():
+    """API: Stop the bot"""
+    global bot_instance, bot_status, bot_start_time
+    
+    with bot_lock:
+        if bot_status == 'offline':
+            return jsonify({
+                'success': False,
+                'message': '⚠️ Bot is already stopped!'
+            })
+        
+        try:
+            if bot_instance:
+                bot_instance.disconnect()
+                bot_instance = None
+            
+            bot_status = 'offline'
+            bot_start_time = None
+            
+            return jsonify({
+                'success': True,
+                'message': '🛑 Bot stopped successfully!'
+            })
+        except Exception as e:
+            return jsonify({
+                'success': False,
+                'message': f'❌ Error stopping bot: {str(e)}'
+            })
+
+@app.route('/api/restart', methods=['POST'])
+def api_restart():
+    """API: Restart the bot"""
+    global bot_instance, bot_status, bot_start_time
+    
+    with bot_lock:
+        if bot_status == 'offline':
+            return jsonify({
+                'success': False,
+                'message': '⚠️ Bot is not running! Start it first.'
+            })
+        
+        try:
+            # Stop current bot
+            if bot_instance:
+                bot_instance.disconnect()
+                bot_instance = None
+            
+            bot_status = 'restarting'
+            
+            # Start new bot
+            def restart_bot():
+                global bot_instance, bot_status, bot_start_time
+                try:
+                    time.sleep(2)  # Wait for cleanup
+                    bot_instance = TeamSpeakBot(
+                        host=SERVER_IP,
+                        port=QUERY_PORT,
+                        username=QUERY_USER,
+                        password=QUERY_PASS,
+                        server_id=SERVER_ID,
+                        nickname=BOT_NICKNAME
+                    )
+                    bot_start_time = time.time()
+                    bot_status = 'online'
+                    bot_instance.monitor()
+                except Exception as e:
+                    print(f"❌ Restart error: {e}")
+                    bot_status = 'offline'
+                    bot_instance = None
+            
+            restart_thread = threading.Thread(target=restart_bot, daemon=True)
+            restart_thread.start()
+            
+            return jsonify({
+                'success': True,
+                'message': '🔄 Bot is restarting... Please wait 5 seconds.'
+            })
+            
+        except Exception as e:
+            bot_status = 'offline'
+            return jsonify({
+                'success': False,
+                'message': f'❌ Error: {str(e)}'
+            })
 
 def run_flask():
+    """Run Flask web server"""
     port = int(os.environ.get('PORT', 10000))
-    print(f"🌐 Health check server starting on port {port}")
+    print(f"🌐 Control Panel: http://0.0.0.0:{port}")
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 # ============================================
@@ -1615,13 +2078,14 @@ if __name__ == "__main__":
     print(f"🤖 TeamSpeak Bot - {BOT_NICKNAME}")
     print("=" * 60)
     
-    # Start Flask health check server in a separate thread
+    # Start Flask control panel in background
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    bot = None
+    # Start bot automatically
+    print("\n🚀 Auto-starting bot...")
     try:
-        bot = TeamSpeakBot(
+        bot_instance = TeamSpeakBot(
             host=SERVER_IP,
             port=QUERY_PORT,
             username=QUERY_USER,
@@ -1629,18 +2093,20 @@ if __name__ == "__main__":
             server_id=SERVER_ID,
             nickname=BOT_NICKNAME
         )
+        bot_start_time = time.time()
+        bot_status = "online"
         
         print("\n📋 Channels:")
-        channels = bot.get_channel_list()
+        channels = bot_instance.get_channel_list()
         for name, cid in channels.items():
             print(f"   CID {cid}: \"{name}\"")
         
         print("\n📋 Server Groups:")
-        groups = bot.get_server_groups()
+        groups = bot_instance.get_server_groups()
         for sgid, name in groups.items():
             print(f"   SGID {sgid}: \"{name}\"")
         
-        bot.monitor()
+        bot_instance.monitor()
         
     except KeyboardInterrupt:
         print("\n\n🛑 Bot stopped")
@@ -1648,6 +2114,7 @@ if __name__ == "__main__":
         print(f"\n❌ Error: {e}")
         import traceback
         traceback.print_exc()
+        bot_status = "offline"
     finally:
-        if bot:
-            bot.disconnect()
+        if bot_instance:
+            bot_instance.disconnect()
