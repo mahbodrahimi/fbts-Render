@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from collections import deque, defaultdict
 import threading
 import os
-import sys
 
 # Flask for web control panel
 from flask import Flask, jsonify, render_template_string, request
@@ -18,21 +17,21 @@ app = Flask(__name__)
 # Global bot instance
 bot_instance = None
 bot_lock = threading.Lock()
+bot_start_time = None
+bot_status = "offline"  # offline, online, restarting
 
-# HTML Template for control panel
+# ============================================
+# CONTROL PANEL HTML
+# ============================================
 CONTROL_PANEL_HTML = """
 <!DOCTYPE html>
-<html dir="ltr">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TS Bot Control Panel</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
@@ -57,10 +56,7 @@ CONTROL_PANEL_HTML = """
             text-align: center;
             margin-bottom: 30px;
         }
-        .header h1 {
-            font-size: 2em;
-            margin-bottom: 10px;
-        }
+        .header h1 { font-size: 2em; margin-bottom: 10px; }
         .status {
             text-align: center;
             padding: 20px;
@@ -69,21 +65,9 @@ CONTROL_PANEL_HTML = """
             font-size: 1.2em;
             font-weight: bold;
         }
-        .status.online {
-            background: rgba(0, 255, 0, 0.1);
-            border: 2px solid #00ff00;
-            color: #00ff00;
-        }
-        .status.offline {
-            background: rgba(255, 0, 0, 0.1);
-            border: 2px solid #ff0000;
-            color: #ff0000;
-        }
-        .status.restarting {
-            background: rgba(255, 165, 0, 0.1);
-            border: 2px solid #ffa500;
-            color: #ffa500;
-        }
+        .status.online { background: rgba(0, 255, 0, 0.1); border: 2px solid #00ff00; color: #00ff00; }
+        .status.offline { background: rgba(255, 0, 0, 0.1); border: 2px solid #ff0000; color: #ff0000; }
+        .status.restarting { background: rgba(255, 165, 0, 0.1); border: 2px solid #ffa500; color: #ffa500; }
         .buttons {
             display: grid;
             grid-template-columns: 1fr 1fr;
@@ -100,40 +84,15 @@ CONTROL_PANEL_HTML = """
             text-transform: uppercase;
             letter-spacing: 1px;
         }
-        .btn:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-        }
-        .btn:active {
-            transform: translateY(0);
-        }
-        .btn-start {
-            background: #00c853;
-            color: white;
-            grid-column: span 2;
-        }
-        .btn-start:hover {
-            background: #00e676;
-        }
-        .btn-stop {
-            background: #ff1744;
-            color: white;
-        }
-        .btn-stop:hover {
-            background: #ff5252;
-        }
-        .btn-restart {
-            background: #ff9100;
-            color: white;
-        }
-        .btn-restart:hover {
-            background: #ffab40;
-        }
-        .btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
+        .btn:hover { transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.3); }
+        .btn:active { transform: translateY(0); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+        .btn-start { background: #00c853; color: white; grid-column: span 2; }
+        .btn-start:hover { background: #00e676; }
+        .btn-stop { background: #ff1744; color: white; }
+        .btn-stop:hover { background: #ff5252; }
+        .btn-restart { background: #ff9100; color: white; }
+        .btn-restart:hover { background: #ffab40; }
         .info {
             margin-top: 30px;
             padding: 20px;
@@ -141,26 +100,16 @@ CONTROL_PANEL_HTML = """
             border-radius: 10px;
             border: 1px solid rgba(255,255,255,0.1);
         }
-        .info h3 {
-            margin-bottom: 15px;
-            color: #aaa;
-        }
+        .info h3 { margin-bottom: 15px; color: #aaa; }
         .info-item {
             display: flex;
             justify-content: space-between;
             padding: 8px 0;
             border-bottom: 1px solid rgba(255,255,255,0.05);
         }
-        .info-item:last-child {
-            border-bottom: none;
-        }
-        .info-label {
-            color: #888;
-        }
-        .info-value {
-            color: #fff;
-            font-weight: bold;
-        }
+        .info-item:last-child { border-bottom: none; }
+        .info-label { color: #888; }
+        .info-value { color: #fff; font-weight: bold; }
         .response {
             margin-top: 20px;
             padding: 15px;
@@ -168,22 +117,9 @@ CONTROL_PANEL_HTML = """
             text-align: center;
             display: none;
         }
-        .response.success {
-            display: block;
-            background: rgba(0, 255, 0, 0.1);
-            border: 1px solid #00ff00;
-            color: #00ff00;
-        }
-        .response.error {
-            display: block;
-            background: rgba(255, 0, 0, 0.1);
-            border: 1px solid #ff0000;
-            color: #ff0000;
-        }
-        .emoji {
-            font-size: 3em;
-            margin-bottom: 10px;
-        }
+        .response.success { display: block; background: rgba(0, 255, 0, 0.1); border: 1px solid #00ff00; color: #00ff00; }
+        .response.error { display: block; background: rgba(255, 0, 0, 0.1); border: 1px solid #ff0000; color: #ff0000; }
+        .emoji { font-size: 3em; margin-bottom: 10px; }
     </style>
 </head>
 <body>
@@ -194,9 +130,7 @@ CONTROL_PANEL_HTML = """
             <p>Control Panel</p>
         </div>
 
-        <div class="status {{ status_class }}">
-            {{ status_text }}
-        </div>
+        <div class="status {{ status_class }}">{{ status_text }}</div>
 
         <div class="buttons">
             <button class="btn btn-start" onclick="action('start')" {{ 'disabled' if status == 'online' else '' }}>
@@ -255,7 +189,6 @@ CONTROL_PANEL_HTML = """
             }
         }
 
-        // Auto refresh every 10 seconds
         setInterval(() => {
             fetch('/api/status')
                 .then(res => res.json())
@@ -271,17 +204,12 @@ CONTROL_PANEL_HTML = """
 </html>
 """
 
-bot_start_time = None
-bot_status = "offline"  # offline, online, restarting
-
 def get_bot_info():
     """Get current bot information"""
-    global bot_instance, bot_status, bot_start_time
-    
     info = {
         'status': bot_status,
-        'server_ip': SERVER_IP if 'SERVER_IP' in globals() else 'N/A',
-        'nickname': BOT_NICKNAME if 'BOT_NICKNAME' in globals() else 'Staff',
+        'server_ip': SERVER_IP,
+        'nickname': BOT_NICKNAME,
         'uptime': 'N/A'
     }
     
@@ -338,15 +266,11 @@ def api_start():
     
     with bot_lock:
         if bot_status == 'online':
-            return jsonify({
-                'success': False,
-                'message': '⚠️ Bot is already running!'
-            })
+            return jsonify({'success': False, 'message': '⚠️ Bot is already running!'})
         
         try:
             bot_status = 'restarting'
             
-            # Start bot in a new thread
             def start_bot():
                 global bot_instance, bot_status, bot_start_time
                 try:
@@ -380,32 +304,18 @@ def api_start():
             bot_thread = threading.Thread(target=start_bot, daemon=True)
             bot_thread.start()
             
-            # Wait a bit to see if connection succeeds
             time.sleep(3)
             
             if bot_status == 'online':
-                return jsonify({
-                    'success': True,
-                    'message': '✅ Bot started successfully!'
-                })
+                return jsonify({'success': True, 'message': '✅ Bot started successfully!'})
             elif bot_status == 'restarting':
-                # Still connecting
-                return jsonify({
-                    'success': True,
-                    'message': '🔄 Bot is connecting... Please wait.'
-                })
+                return jsonify({'success': True, 'message': '🔄 Bot is connecting... Please wait.'})
             else:
-                return jsonify({
-                    'success': False,
-                    'message': '❌ Bot failed to start! Check logs.'
-                })
+                return jsonify({'success': False, 'message': '❌ Bot failed to start! Check logs.'})
                 
         except Exception as e:
             bot_status = 'offline'
-            return jsonify({
-                'success': False,
-                'message': f'❌ Error: {str(e)}'
-            })
+            return jsonify({'success': False, 'message': f'❌ Error: {str(e)}'})
 
 @app.route('/api/stop', methods=['POST'])
 def api_stop():
@@ -414,10 +324,7 @@ def api_stop():
     
     with bot_lock:
         if bot_status == 'offline':
-            return jsonify({
-                'success': False,
-                'message': '⚠️ Bot is already stopped!'
-            })
+            return jsonify({'success': False, 'message': '⚠️ Bot is already stopped!'})
         
         try:
             if bot_instance:
@@ -427,15 +334,9 @@ def api_stop():
             bot_status = 'offline'
             bot_start_time = None
             
-            return jsonify({
-                'success': True,
-                'message': '🛑 Bot stopped successfully!'
-            })
+            return jsonify({'success': True, 'message': '🛑 Bot stopped successfully!'})
         except Exception as e:
-            return jsonify({
-                'success': False,
-                'message': f'❌ Error stopping bot: {str(e)}'
-            })
+            return jsonify({'success': False, 'message': f'❌ Error stopping bot: {str(e)}'})
 
 @app.route('/api/restart', methods=['POST'])
 def api_restart():
@@ -444,24 +345,19 @@ def api_restart():
     
     with bot_lock:
         if bot_status == 'offline':
-            return jsonify({
-                'success': False,
-                'message': '⚠️ Bot is not running! Start it first.'
-            })
+            return jsonify({'success': False, 'message': '⚠️ Bot is not running! Start it first.'})
         
         try:
-            # Stop current bot
             if bot_instance:
                 bot_instance.disconnect()
                 bot_instance = None
             
             bot_status = 'restarting'
             
-            # Start new bot
             def restart_bot():
                 global bot_instance, bot_status, bot_start_time
                 try:
-                    time.sleep(2)  # Wait for cleanup
+                    time.sleep(2)
                     bot_instance = TeamSpeakBot(
                         host=SERVER_IP,
                         port=QUERY_PORT,
@@ -481,17 +377,11 @@ def api_restart():
             restart_thread = threading.Thread(target=restart_bot, daemon=True)
             restart_thread.start()
             
-            return jsonify({
-                'success': True,
-                'message': '🔄 Bot is restarting... Please wait 5 seconds.'
-            })
+            return jsonify({'success': True, 'message': '🔄 Bot is restarting... Please wait 5 seconds.'})
             
         except Exception as e:
             bot_status = 'offline'
-            return jsonify({
-                'success': False,
-                'message': f'❌ Error: {str(e)}'
-            })
+            return jsonify({'success': False, 'message': f'❌ Error: {str(e)}'})
 
 def run_flask():
     """Run Flask web server"""
@@ -2082,7 +1972,7 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(target=run_flask, daemon=True)
     flask_thread.start()
     
-    # Start bot automatically
+    # Auto-start bot
     print("\n🚀 Auto-starting bot...")
     try:
         bot_instance = TeamSpeakBot(
