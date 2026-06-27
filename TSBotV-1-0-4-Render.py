@@ -1356,6 +1356,19 @@ class TeamSpeakBot:
             return f"{months} month(s)"
     
     # ============================================
+    # COMMAND NOTIFICATION HELPER
+    # ============================================
+    
+    def notify_staff_action(self, invoker_clid, message, chat_type='channel'):
+        """Send notification to staff about their action"""
+        # Always send to private if not already in private chat
+        if chat_type != 'private':
+            self.send_private_message(invoker_clid, message)
+        else:
+            # Already in private, just reply normally
+            self.reply_to_command(invoker_clid, chat_type, message)
+    
+    # ============================================
     # COMMANDS
     # ============================================
     
@@ -1379,7 +1392,7 @@ class TeamSpeakBot:
         if command == 'help' and CMD_HELP_ENABLED:
             self.cmd_help(invoker_clid)
             if chat_type != 'private':
-                self.reply_to_command(invoker_clid, chat_type, "📨 Commands sent to private chat!")
+                self.reply_to_command(invoker_clid, chat_type, "📨 Commands list sent to private chat!")
             return
         
         elif command == 'kick' and CMD_KICK_ENABLED:
@@ -1434,29 +1447,13 @@ class TeamSpeakBot:
             self.send_private_message(invoker_clid, message)
     
     def cmd_help(self, invoker_clid):
-        """Enhanced help with new commands"""
-        help_parts = [f"CMD's ({CMD_PREFIX}):"]
+        """Enhanced help - only for staff"""
+        if not self._is_staff(invoker_clid):
+            self.send_private_message(invoker_clid, "❌ You don't have permission to use this command!")
+            return
         
-        if CMD_POKE_ENABLED:
-            help_parts.append(f"  {CMD_PREFIX}Poke [Name] [Message]")
-        if CMD_MOVE_ENABLED:
-            help_parts.append(f"  {CMD_PREFIX}Move [Name] [Channel/Me]")
-        if CMD_KICK_ENABLED:
-            help_parts.append(f"  {CMD_PREFIX}Kick [Name] [Reason]")
-        if CMD_BAN_ENABLED:
-            help_parts.append(f"  {CMD_PREFIX}Ban [Name] [Time] [Reason]")
-        if CMD_UNBAN_ENABLED:
-            help_parts.append(f"  {CMD_PREFIX}Unban [Name]")
-        if MUTE_COMMAND_ENABLED:
-            help_parts.append(f"  {CMD_PREFIX}Mute [Name] [Time]")
-            help_parts.append(f"  {CMD_PREFIX}Unmute [Name]")
-        if JAIL_COMMAND_ENABLED:
-            help_parts.append(f"  {CMD_PREFIX}Jail [Name] [Time]")
-            help_parts.append(f"  {CMD_PREFIX}Unjail [Name]")
+        help_msg = "CMD's : !Help , !Poke [Name] [Reason] , !Kick [Name] [Reason] , !Move [Name] [Channel/Name] , !Ban [Name] [Time] , !Mute/!Unmute [Name] [Time] , !Jail/!Unjail [Time]"
         
-        help_parts.append(f"\n⏱ Time: s,m,h,d,w,mo,y,life")
-        
-        help_msg = "\n".join(help_parts)
         self.send_private_message(invoker_clid, help_msg)
         print(f"📨 Help sent to {self.get_client_nickname(invoker_clid)}")
     
@@ -1473,10 +1470,12 @@ class TeamSpeakBot:
         nickname = self.get_client_nickname(target_clid)
         
         if self.kick_client(target_clid, reason):
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Kicked '{nickname}'")
+            msg = f"✅ Kicked '{nickname}' | Reason: {reason}"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"👢 {self.get_client_nickname(invoker_clid)} kicked {nickname}")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to kick '{nickname}'")
+            msg = f"❌ Failed to kick '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_ban(self, invoker_clid, target_name, time_str, reason, chat_type='channel'):
         if not target_name:
@@ -1498,10 +1497,12 @@ class TeamSpeakBot:
         result = self.ban_client(target_clid, time_seconds, reason)
         if result:
             time_display = time_str.upper() if time_str.lower() not in ['l', 'life'] else 'PERMANENT'
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Banned '{nickname}' | {time_display}")
+            msg = f"✅ Banned '{nickname}' | {time_display} | Reason: {reason}"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"🔨 {self.get_client_nickname(invoker_clid)} banned {nickname} ({time_display})")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to ban '{nickname}'")
+            msg = f"❌ Failed to ban '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_unban(self, invoker_clid, target_name, chat_type='channel'):
         if not target_name:
@@ -1514,10 +1515,12 @@ class TeamSpeakBot:
             return
         
         if self.unban_client(banid):
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Unbanned '{target_name}'")
+            msg = f"✅ Unbanned '{target_name}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"🔓 {self.get_client_nickname(invoker_clid)} unbanned {target_name}")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to unban '{target_name}'")
+            msg = f"❌ Failed to unban '{target_name}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_poke(self, invoker_clid, target_name, message, chat_type='channel'):
         if not target_name:
@@ -1532,14 +1535,16 @@ class TeamSpeakBot:
         nickname = self.get_client_nickname(target_clid)
         
         if self.send_poke(target_clid, message):
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Poked '{nickname}'")
+            msg = f"✅ Poked '{nickname}' | Message: {message}"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"📨 {self.get_client_nickname(invoker_clid)} poked {nickname}: {message}")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to poke '{nickname}'")
+            msg = f"❌ Failed to poke '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_move(self, invoker_clid, target_name, channel_input, chat_type='channel'):
         if not target_name:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Usage: {CMD_PREFIX}Move [Name] [Channel/Me]")
+            self.reply_to_command(invoker_clid, chat_type, f"❌ Usage: {CMD_PREFIX}Move [Name] [Channel/Me/UserName]")
             return
         
         target_clid = self.find_client_by_name(target_name)
@@ -1549,7 +1554,6 @@ class TeamSpeakBot:
         
         # Track this move for spam detection (before actually moving)
         if self._track_move(target_clid, "manual"):
-            # _track_move returns True if spam detected and action taken
             self.reply_to_command(invoker_clid, chat_type, f"⚠️ '{target_name}' has been moved too frequently ({MOVE_SPAM_BAN_REASON})!")
             return
         
@@ -1561,29 +1565,52 @@ class TeamSpeakBot:
             
             channel_id = invoker_channel
             channel_name = self.get_channel_name(channel_id)
+            target_user_nickname = None
+        elif channel_input:
+            # Check if channel_input is a username
+            target_user_clid = self.find_client_by_name(channel_input)
+            if target_user_clid:
+                # Move target to the channel of the specified user
+                target_user_channel = self.get_client_channel(target_user_clid)
+                if not target_user_channel:
+                    self.reply_to_command(invoker_clid, chat_type, f"❌ Could not find '{channel_input}' channel!")
+                    return
+                
+                channel_id = target_user_channel
+                channel_name = self.get_channel_name(channel_id)
+                target_user_nickname = self.get_client_nickname(target_user_clid)
+            else:
+                # Check if it's a channel name/ID
+                channel_id = self.resolve_channel_id(channel_input)
+                if not channel_id:
+                    self.reply_to_command(invoker_clid, chat_type, f"❌ Channel or User '{channel_input}' not found!")
+                    return
+                channel_name = self.get_channel_name(channel_id)
+                target_user_nickname = None
         else:
-            if not channel_input:
-                self.reply_to_command(invoker_clid, chat_type, f"❌ Usage: {CMD_PREFIX}Move [Name] [Channel/Me]")
-                return
-            
-            channel_id = self.resolve_channel_id(channel_input)
-            if not channel_id:
-                self.reply_to_command(invoker_clid, chat_type, f"❌ Channel '{channel_input}' not found!")
-                return
-            
-            channel_name = self.get_channel_name(channel_id)
+            self.reply_to_command(invoker_clid, chat_type, f"❌ Usage: {CMD_PREFIX}Move [Name] [Channel/Me/UserName]")
+            return
         
         nickname = self.get_client_nickname(target_clid)
         invoker_name = self.get_client_nickname(invoker_clid)
         
         if self.move_client(target_clid, channel_id):
-            if channel_input and channel_input.lower() == 'me':
-                self.reply_to_command(invoker_clid, chat_type, f"✅ Moved '{nickname}' to your channel")
+            if channel_input.lower() == 'me':
+                msg = f"✅ Moved '{nickname}' to your channel"
+            elif target_user_nickname:
+                msg = f"✅ Moved '{nickname}' → {target_user_nickname}'s channel ({channel_name})"
             else:
-                self.reply_to_command(invoker_clid, chat_type, f"✅ Moved '{nickname}' → {channel_name}")
-            print(f"🔄 {invoker_name} moved {nickname} → {channel_name}")
+                msg = f"✅ Moved '{nickname}' → {channel_name}"
+            
+            self.notify_staff_action(invoker_clid, msg, chat_type)
+            
+            if target_user_nickname:
+                print(f"🔄 {invoker_name} moved {nickname} → {target_user_nickname}'s channel ({channel_name})")
+            else:
+                print(f"🔄 {invoker_name} moved {nickname} → {channel_name}")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to move '{nickname}'")
+            msg = f"❌ Failed to move '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_mute(self, invoker_clid, target_name, time_str, chat_type='channel'):
         """!mute [name] [time]"""
@@ -1614,10 +1641,12 @@ class TeamSpeakBot:
         
         if self._mute_user(target_clid, nickname, duration_minutes, cldbid):
             time_display = time_str.upper() if time_str.lower() not in ['l', 'life'] else 'PERMANENT'
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Muted '{nickname}' | {time_display}")
+            msg = f"✅ Muted '{nickname}' | {time_display}"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"🔇 {self.get_client_nickname(invoker_clid)} muted {nickname} ({time_display})")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to mute '{nickname}'")
+            msg = f"❌ Failed to mute '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_unmute(self, invoker_clid, target_name, chat_type='channel'):
         """!unmute [name]"""
@@ -1637,10 +1666,12 @@ class TeamSpeakBot:
         nickname = self.get_client_nickname(target_clid)
         
         if self._unmute_user(target_clid, nickname):
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Unmuted '{nickname}'")
+            msg = f"✅ Unmuted '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"🔈 {self.get_client_nickname(invoker_clid)} unmuted {nickname}")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to unmute '{nickname}'")
+            msg = f"❌ Failed to unmute '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_jail(self, invoker_clid, target_name, time_str, chat_type='channel'):
         """!jail [name] [time]"""
@@ -1671,10 +1702,12 @@ class TeamSpeakBot:
         
         if self._jail_user_cmd(target_clid, nickname, duration_minutes, cldbid):
             time_display = time_str.upper() if time_str.lower() not in ['l', 'life'] else 'PERMANENT'
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Jailed '{nickname}' | {time_display}")
+            msg = f"✅ Jailed '{nickname}' | {time_display}"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"🔒 {self.get_client_nickname(invoker_clid)} jailed {nickname} ({time_display})")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to jail '{nickname}'")
+            msg = f"❌ Failed to jail '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def cmd_unjail(self, invoker_clid, target_name, chat_type='channel'):
         """!unjail [name]"""
@@ -1694,10 +1727,12 @@ class TeamSpeakBot:
         nickname = self.get_client_nickname(target_clid)
         
         if self._remove_jail(target_clid):
-            self.reply_to_command(invoker_clid, chat_type, f"✅ Unjailed '{nickname}'")
+            msg = f"✅ Unjailed '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
             print(f"🔓 {self.get_client_nickname(invoker_clid)} unjailed {nickname}")
         else:
-            self.reply_to_command(invoker_clid, chat_type, f"❌ Failed to unjail '{nickname}'")
+            msg = f"❌ Failed to unjail '{nickname}'"
+            self.notify_staff_action(invoker_clid, msg, chat_type)
     
     def check_afk_state(self, clid):
         info = self.get_client_detailed_info(clid)
