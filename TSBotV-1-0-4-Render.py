@@ -402,8 +402,8 @@ SERVER_ID = 1
 BOT_NICKNAME = "Staff"
 
 # Channel Settings (ID or Exact Name)
-CHANNEL_MOVE_ME = 12
-CHANNEL_AFK = 13
+CHANNEL_MOVE_ME = 50
+CHANNEL_AFK = 60
 
 # Admin/Staff Settings for Notifications
 NOTIFY_MODE = "both"
@@ -437,8 +437,8 @@ CMD_MOVE_ENABLED = True
 # ============================================
 
 AUTO_SGROUP_ENABLED = True          # Enable/Disable auto server group
-NEW_SVGP = 17                       # Server Group to check (Guest)
-NORMAL_SVGP = 16                    # Server Group to give (Member)
+NEW_SVGP = 51                       # Server Group to check (Guest)
+NORMAL_SVGP = 55                    # Server Group to give (Member)
 AUTO_SGROUP_IGNORE_STAFF = False     # Ignore staff members
 
 # ============================================
@@ -446,8 +446,9 @@ AUTO_SGROUP_IGNORE_STAFF = False     # Ignore staff members
 # ============================================
 
 MUTE_ENABLED = True
-MUTE_SERVER_GROUP_ID = 26        # Mute Microphone
-MUTE_SERVER_GROUP_ID2 = 27       # Mute Speaker (optional, set to None to disable)
+MUTE_SERVER_GROUP_ID = 90        # Mute Microphone
+MUTE_SERVER_GROUP_ID2 = 89       # Mute Speaker (optional, set to None to disable)
+MUTE_SERVER_GROUP_ID3 = 91       # No Poke Power (optional, set to None to disable)
 MUTE_COMMAND_ENABLED = True       # Enable !mute command
 
 # ============================================
@@ -470,7 +471,7 @@ CHAT_SPAM_TIME_WINDOW = 3
 CHAT_SPAM_IGNORE_STAFF = True
 
 # Jail Settings (First offense)
-JAIL_SERVER_GROUP_ID = 29
+JAIL_SERVER_GROUP_ID = 88
 JAIL_DURATION = 5
 JAIL_AUTO_REMOVE = True
 
@@ -561,7 +562,15 @@ class TeamSpeakBot:
         print(f"✅ Listening for {CMD_PREFIX}commands in all chats")
         print(f"🔄 Auto Server Group: {'ENABLED' if AUTO_SGROUP_ENABLED else 'DISABLED'} (SGID:{NEW_SVGP} → +SGID:{NORMAL_SVGP})")
         print(f"🛡️  Anti-Spam: {'ENABLED' if ANTI_SPAM_ENABLED else 'DISABLED'}")
-        print(f"🔇 Mute: {'ENABLED' if MUTE_ENABLED else 'DISABLED'} (SGID:{MUTE_SERVER_GROUP_ID}, {MUTE_SERVER_GROUP_ID2})")
+        
+        # Build mute groups display string
+        mute_groups = f"SGID:{MUTE_SERVER_GROUP_ID}"
+        if MUTE_SERVER_GROUP_ID2:
+            mute_groups += f", {MUTE_SERVER_GROUP_ID2}"
+        if MUTE_SERVER_GROUP_ID3:
+            mute_groups += f", {MUTE_SERVER_GROUP_ID3}"
+        print(f"🔇 Mute: {'ENABLED' if MUTE_ENABLED else 'DISABLED'} ({mute_groups})")
+        
         print(f"🔒 Jail: {'ENABLED' if JAIL_COMMAND_ENABLED else 'DISABLED'} (SGID:{JAIL_SERVER_GROUP_ID})")
         print(f"🚫 Anti-Move Spam: {'ENABLED' if ANTI_MOVE_SPAM_ENABLED else 'DISABLED'} ({MOVE_SPAM_MAX_MOVES}/{MOVE_SPAM_TIME_WINDOW}s)")
         if ANTI_MOVE_SPAM_ENABLED:
@@ -757,6 +766,14 @@ class TeamSpeakBot:
             else:
                 success = False
         
+        # Add third mute group if configured
+        if MUTE_SERVER_GROUP_ID3:
+            if self._add_server_group(cldbid, str(MUTE_SERVER_GROUP_ID3)):
+                sg_list.append(MUTE_SERVER_GROUP_ID3)
+                print(f"   🔇 Added mute SGID:{MUTE_SERVER_GROUP_ID3} to {name}")
+            else:
+                success = False
+        
         if sg_list:
             if duration_minutes > 0:
                 mute_end = time.time() + (duration_minutes * 60)
@@ -905,8 +922,7 @@ class TeamSpeakBot:
     def _check_move_spam(self, clid):
         """Check if a user has been moved too frequently"""
         if not ANTI_MOVE_SPAM_ENABLED:
-            return False
-        
+            return False        
         if MOVE_SPAM_IGNORE_STAFF and self._is_staff(clid):
             return False
         
