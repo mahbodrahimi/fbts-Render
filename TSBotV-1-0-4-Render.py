@@ -438,7 +438,7 @@ CMD_MOVE_ENABLED = True
 
 AUTO_SGROUP_ENABLED = True          # Enable/Disable auto server group
 NEW_SVGP = 51                       # Server Group to check (Guest)
-NORMAL_SVGP = 55                    # Server Group to give (Member)
+NORMAL_SVGP = 57                    # Server Group to give (Member)
 AUTO_SGROUP_IGNORE_STAFF = False     # Ignore staff members
 
 # ============================================
